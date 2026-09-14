@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,7 +12,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api import router
 from app.core.config import settings
-from app.core.exceptions import BaseAuthException, WeakPasswordException
+from app.core.exceptions import BaseAuthException
 from app.core.logging import SensitiveDataFilter
 from app.core.rate_limiter import limiter
 
@@ -69,14 +70,14 @@ async def custom_auth_exception_handler(request: Request, exc: BaseAuthException
 
     return JSONResponse(
         status_code=exc.status_code,
-        content=content,
+        content=jsonable_encoder(content),
     )
 
 
 # ── Pydantic Request Validation Error Handler ────────────────────────────────
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    # Check if a WeakPasswordException was raised inside Pydantic validator
+    # Check if a BaseAuthException was raised inside Pydantic validator
     for err in exc.errors():
         ctx = err.get("ctx", {})
         if "error" in ctx and isinstance(ctx["error"], BaseAuthException):
@@ -88,16 +89,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             }
             if base_exc.details is not None:
                 content["details"] = base_exc.details
-            return JSONResponse(status_code=base_exc.status_code, content=content)
+            return JSONResponse(status_code=base_exc.status_code, content=jsonable_encoder(content))
 
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
-        content={
+        content=jsonable_encoder({
             "success": False,
             "code": "VALIDATION_ERROR",
             "message": "Invalid request parameters.",
             "details": exc.errors(),
-        },
+        }),
     )
 
 

@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -11,9 +11,10 @@ from app.models.user import User
 from app.schemas.category import (
     CategoryCreate,
     CategoryResponse,
-    CategoryTreeResponse,
     CategoryUpdate,
 )
+from app.schemas.product import ProductListResponse
+from app.services import category_service
 
 router = APIRouter()
 
@@ -39,19 +40,30 @@ def list_categories(
     summary="Get category by ID or slug",
 )
 def get_category(id_or_slug: str, db: Session = Depends(get_db)) -> CategoryResponse:
-    category = None
-    try:
-        cat_uuid = uuid.UUID(id_or_slug)
-        category = crud.get_category_by_id(db, cat_uuid)
-    except ValueError:
-        category = crud.get_category_by_slug(db, id_or_slug)
+    return category_service.get_category_by_id_or_slug(db, id_or_slug)
 
-    if not category:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Category not found",
-        )
-    return category
+
+@router.get(
+    "/{id_or_slug}/products",
+    response_model=ProductListResponse,
+    summary="List products in category",
+)
+def get_category_products(
+    id_or_slug: str,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> ProductListResponse:
+    items, total, pages = category_service.get_category_products(
+        db, id_or_slug, page=page, limit=limit
+    )
+    return ProductListResponse(
+        items=items,
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages,
+    )
 
 
 @router.post(
@@ -65,12 +77,7 @@ def create_category(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_superuser),
 ) -> CategoryResponse:
-    if crud.get_category_by_slug(db, crud.slugify(category_in.name)):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Category with this name already exists",
-        )
-    return crud.create_category(db, category_in)
+    return category_service.create_category(db, category_in)
 
 
 @router.put(
@@ -84,30 +91,29 @@ def update_category(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_superuser),
 ) -> CategoryResponse:
-    category = crud.get_category_by_id(db, category_id)
-    if not category:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Category not found",
-        )
-    return crud.update_category(db, category, category_in)
+    return category_service.update_category(db, category_id, category_in)
+
+
+@router.patch(
+    "/{category_id}/deactivate",
+    response_model=CategoryResponse,
+    summary="Deactivate category (Superuser only)",
+)
+def deactivate_category(
+    category_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> CategoryResponse:
+    return category_service.deactivate_category(db, category_id)
 
 
 @router.delete(
     "/{category_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete category (Superuser only)",
+    summary="Safely delete or deactivate category (Superuser only)",
 )
 def delete_category(
     category_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_superuser),
-):
-    category = crud.get_category_by_id(db, category_id)
-    if not category:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Category not found",
-        )
-    crud.delete_category(db, category)
-    return None
+) -> Any:
+    return category_service.safe_delete_category(db, category_id)

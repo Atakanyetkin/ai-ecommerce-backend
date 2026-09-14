@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.enums import ProductStatus
 from app.models.product import UnitType
 from app.schemas.category import CategoryResponse
 
@@ -13,16 +14,27 @@ class ProductBase(BaseModel):
     name: str = Field(min_length=2, max_length=150)
     description: str | None = None
     category_id: uuid.UUID
-    price: Decimal = Field(gt=0, decimal_places=2)
+    price: Decimal = Field(gt=0, decimal_places=2, description="Price must be strictly positive (> 0)")
     discount_price: Decimal | None = Field(default=None, decimal_places=2)
     unit: UnitType = UnitType.KG
     unit_amount: float = Field(default=1.0, gt=0)
-    stock_quantity: float = Field(default=0.0, ge=0)
+    stock_quantity: float = Field(default=0.0, ge=0, description="Stock quantity cannot be negative (>= 0)")
     sku: str = Field(min_length=3, max_length=100)
     image_url: str | None = None
     is_organic: bool = False
     origin: str | None = None
     is_active: bool = True
+
+    @field_validator("discount_price")
+    @classmethod
+    def validate_discount_price(cls, v: Decimal | None, info) -> Decimal | None:
+        if v is not None:
+            if v <= 0:
+                raise ValueError("discount_price must be greater than 0")
+            price = info.data.get("price")
+            if price and v >= price:
+                raise ValueError("discount_price must be strictly less than price")
+        return v
 
 
 class ProductCreate(ProductBase):
@@ -50,10 +62,11 @@ class ProductUpdate(BaseModel):
 
 
 class ProductResponse(ProductBase):
-    """Public representation of a Product."""
+    """Public representation of a Product with dynamically derived status."""
 
     id: uuid.UUID
     slug: str
+    status: ProductStatus
     created_at: datetime
     updated_at: datetime
     category: CategoryResponse | None = None
